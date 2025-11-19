@@ -208,7 +208,3 @@ This repository is created for **AI/ML coursework** and is **not intended for co
 
 
 ---
-
-````
-
-If you want, tell me **which figures you already have** (PCA, ROC, DTW, etc.), and I’ll suggest exactly **which ones to convert to GIF** and where to place them in the README.
