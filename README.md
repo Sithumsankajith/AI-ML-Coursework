@@ -1,249 +1,214 @@
-# 📌 Acceleration-Based User Authentication
+<!-- Top banner GIF (put your own in /media and update the path) -->
+<p align="center">
+  <img src="media/gait-auth-banner.gif" alt="Acceleration-Based User Authentication Banner" width="80%">
+</p>
 
-### *AI/ML Coursework*
+<h1 align="center">⚡ Acceleration-Based User Authentication</h1>
+<h3 align="center">AI/ML Coursework</h3>
 
-This repository contains the full MATLAB implementation, experimental workflow, feature analysis, and visualisations for an **acceleration-based user authentication system** developed using smartwatch motion data.
-The project investigates whether **walking patterns** captured from inertial sensors can reliably authenticate users under realistic conditions.
+<p align="center">
+  <img src="https://img.shields.io/badge/Made_with-MATLAB-orange?logo=mathworks&style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Domain-Biometrics-blueviolet?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/ML-Supervised-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge" />
+</p>
 
----
-
-# 🚀 1. Project Overview
-
-* **Device:** Smartwatch inertial sensors
-* **Sensors:** Accelerometer (used), Gyroscope (available but reserved for future work)
-* **Users:** 10 participants
-* **Sessions:**
-
-  * **F-Day** (Session 1)
-  * **M-Day** (Session 2 – collected separately)
-* **Feature Sets:**
-
-  * Time Domain (`Acc_TimeD`)
-  * Frequency Domain (`Acc_FreqD`)
-  * Combined (`Acc_TimeD_FreqD`)
-* **Core Tasks:**
-
-  * Train neural network & SVM-based authentication models
-  * Analyse similarity across sessions
-  * Perform hybrid feature selection (ANOVA + MI + SG)
-  * Optimise model performance (GA + SVM tuning, NN tuning)
-  * Generate PCA clusters, DTW matrices, variance plots
-  * Evaluate real-world authentication metrics (Accuracy, FAR, FRR, EER, MCC)
+<p align="center">
+  <!-- Small looping GIF of signals / waves -->
+  <img src="media/sensor-wave-loop.gif" alt="Sensor Wave Animation" width="260">
+</p>
 
 ---
 
-# 📁 2. Repository Structure
+## 🌟 Project Snapshot
+
+> **Goal:** Authenticate users from their **walking pattern** using smartwatch acceleration signals,  
+> while exploring how **feature selection** and **optimisation** impact performance.
+
+- 🎯 **Users:** 10  
+- 📅 **Sessions:** F-Day & M-Day  
+- 📡 **Sensors:** Smartwatch accelerometer (gyroscope reserved for future work)  
+- 🧠 **Models:** Feedforward Neural Networks, SVM + GA optimisation  
+- 🧪 **Analysis:** PCA, Cosine similarity, DTW, Inter/Intra variance, ratio splits  
+
+---
+
+## 📁 Repository Structure
 
 ```text
-dataset/                         # MAT feature files per user (F-Day / M-Day)
-dataset_csv/                     # Raw CSV recordings from smartwatch
+dataset/                         # MAT feature files (FDay / MDay)
+dataset_csv/                     # Raw smartwatch CSV recordings
 
-ANova_figures/                   # ANOVA + MI + SG feature selection figures
-SVMFigures/                      # SVM optimisation results & figures
+ANova_figures/                   # ANOVA + MI + SG feature-selection plots
+SVMFigures/                      # SVM optimisation plots & logs
 
-preprocess_csvs.m                # CSV → MAT feature extraction and preprocessing
-run_benchmark.m                  # Main NN benchmark + evaluation scenarios
+preprocess_csvs.m                # CSV → MAT feature pipeline
+run_benchmark.m                  # Main NN benchmark (all scenarios)
 initial_model.m                  # Baseline neural network
 initial_model_tuning.m           # Hyperparameter tuning for NN
 
-optimization_SVM_of_model.m      # Full GA + SVM optimisation (LOU enabled)
+optimization_SVM_of_model.m      # GA + SVM optimisation (with LOUO)
 optimization_SVM_no_louo_of_model.m
-                                 # Fast SVM optimisation (no leave-one-user-out)
-modelratiotester.m               # Tests different target:imposter ratios (1:1–1:7)
 
-ANOVa_steepest_gradiant.m        # Hybrid feature selection (ANOVA + MI + SG)
-ANOVa_steepest_gradiant_without_lou.m
+modelratiotester.m               # Target:imposter ratio experiments (1:1–1:7)
 
-cluster_3d.m                     # PCA clustering in 2D/3D
-cosine_3d.m                      # Cosine similarity (F-Day vs M-Day)
-user_similarity_dtw.m            # DTW-based inter-user similarity matrix
-inter_andIntra_3d.m              # Inter-user vs intra-user variance analysis
+cluster_3d.m                     # PCA clustering visualisations
+cosine_3d.m                      # Cosine similarity across days
+user_similarity_dtw.m            # DTW similarity heatmaps
+inter_andIntra_3d.m              # Inter vs intra-user variance analysis
 
-feature_set_split_tester_of_model.m
-                                 # Feature-set-wise performance comparison
 testing_scenarios_results_clean.mat
-benchmark_results*.mat           # Summary metrics for all models
+benchmark_results*.mat
 ratio_splitting_performance_*.mat
 feature_analysis_results*.mat
 visualizer_of_variance.m
-```
+````
 
 ---
 
-# ▶️ 3. Running the Experiments
+## 🧩 Pipeline Overview
 
-## 3.1. Requirements
+<p align="center">
+  <!-- Architecture / pipeline GIF (PCA, NN, SVM animation etc.) -->
+  <img src="media/pipeline-flow.gif" alt="Pipeline Animation" width="75%">
+</p>
 
-* **MATLAB R2023a+** recommended
-* **Toolboxes:**
-
-  * Statistics and Machine Learning Toolbox
-  * Neural Network Toolbox
-
-Clone the repo and open MATLAB in the root directory.
+1. **Data Ingestion** → Raw CSVs from smartwatch
+2. **Preprocessing** → Feature extraction (time + frequency)
+3. **Feature Selection** → ANOVA + MI + Steepest Gradient
+4. **Model Training** → NN per user (target vs imposters), SVM + GA
+5. **Evaluation** → FAR, FRR, EER, MCC, ROC, confusion matrices
+6. **Analysis** → PCA clusters, DTW, cosine similarity, variance plots
 
 ---
 
-## 3.2. Preprocessing (Optional)
+## ⚙️ How to Run
+
+### 1️⃣ Optional: Rebuild MAT Features
 
 ```matlab
 preprocess_csvs
 ```
 
-This script:
-✓ Reads raw CSVs
-✓ Extracts time & frequency features
-✓ Creates the MAT feature files:
-
-* `Acc_TimeD_FDay`, `Acc_TimeD_MDay`
-* `Acc_FreqD_FDay`, `Acc_FreqD_MDay`
-* `Acc_TimeD_FreqD_FDay`, `Acc_TimeD_FreqD_MDay`
+* Reads `dataset_csv/`
+* Extracts time & frequency features
+* Writes feature sets into `dataset/`
 
 ---
 
-## 3.3. Neural Network Benchmark
+### 2️⃣ Main NN Benchmark
 
 ```matlab
 run_benchmark
 ```
 
-Outputs include:
+Runs multiple scenarios and saves:
 
-* Confusion matrices
-* ROC curves
-* FAR / FRR / EER
-* MCC
-* Ratio variations
-* Scenario-based summaries
-* `benchmark_results.mat`
+* Accuracy, FAR, FRR, EER, MCC
+* Confusion matrices & ROC curves
+* `benchmark_results*.mat`, `testing_scenarios_results_clean.mat`
 
 ---
 
-## 3.4. Feature Selection (ANOVA + MI + SG)
+### 3️⃣ Hybrid Feature Selection (ANOVA + MI + SG)
 
 ```matlab
 ANOVa_steepest_gradiant
 ```
 
-Produces:
+Outputs:
 
-* Feature importance bar charts
-* MI & p-value visualisations
-* Correlation heatmaps
+* Stacked bar charts of feature importance
+* Correlation matrices of selected subsets
 * Top-k feature rankings
-* Saved under **ANova_figures/**
+* Figures under `ANova_figures/`
 
 ---
 
-## 3.5. PCA Clustering
+### 4️⃣ Visual Insights (PCA, DTW, Similarity)
 
 ```matlab
-cluster_3d
+cluster_3d          % PCA clusters
+cosine_3d           % F-Day vs M-Day cosine similarity
+user_similarity_dtw % DTW heatmaps
+inter_andIntra_3d   % Inter vs intra-user variance
 ```
 
-Creates user-labelled PCA scatterplots in 2D & 3D.
-Ideal for showing class separability.
+<p align="center">
+  <!-- PCA rotation GIF -->
+  <img src="media/pca-rotation.gif" alt="PCA 3D Cluster Rotation" width="55%">
+</p>
 
 ---
 
-## 3.6. Ratio Splitting (Target:Imposter)
+### 5️⃣ SVM + GA Optimisation
 
 ```matlab
-modelratiotester
+optimization_SVM_of_model        % Full GA + LOUO evaluation
+% or (faster, without leave-one-user-out)
+optimization_SVM_no_louo_of_model
 ```
 
 Generates:
 
-* Accuracy vs Ratio
-* FAR / FRR / EER curves
-* MCC behaviour
-* Saved as `ratio_splitting_performance_*.mat`
+* Optimised SVM hyperparameters
+* Selected feature subsets
+* Performance summaries & figures → `SVMFigures/`
 
 ---
 
-## 3.7. SVM + GA Optimisation
+## 📊 Key Experiments & Metrics
 
-Full optimisation:
-
-```matlab
-optimization_SVM_of_model
-```
-
-Fast version:
-
-```matlab
-optimization_SVM_no_louo_of_model
-```
-
-Produces:
-
-* Best chromosomes
-* Selected feature sets
-* Optimised hyperparameters
-* SVM performance figures
+* 🔁 **Target:Imposter Ratios:** `modelratiotester` explores 1:1 … 1:7
+* 📉 **Metrics:** Accuracy, FAR, FRR, EER, Precision, Recall, MCC, AUC
+* 🧬 **Feature Sets:** TimeD, FreqD, Combined (`Acc_TimeD_FreqD`)
+* 🧪 **Generalisation:** Train on F-Day, test on M-Day & combined-day setups
 
 ---
 
-# 🧪 4. Supporting Analytical Tools
+## 🧑‍💻 Contributors
 
-### ✔ Cosine Similarity (`cosine_3d.m`)
-
-Evaluates session-to-session consistency.
-
-### ✔ Dynamic Time Warping (`user_similarity_dtw.m`)
-
-Shows similarity structure between users.
-
-### ✔ Inter vs Intra Variance (`inter_andIntra_3d.m`)
-
-Checks biometric discriminability.
+<p align="center">
+  <!-- subtle fade / hover comes from GitHub’s default styles; layout is the “cool” part -->
+  <table>
+    <tr>
+      <td align="center">
+        <a href="https://github.com/Sithumsankajith">
+          <img src="https://avatars.githubusercontent.com/Sithumsankajith" width="110" style="border-radius:50%;"><br>
+          <sub><b>Sithum Sankajith</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://github.com/dasunikayapabandara">
+          <img src="https://avatars.githubusercontent.com/dasunikayapabandara" width="110" style="border-radius:50%;"><br>
+          <sub><b>Dasunika Yapabandara</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://github.com/BenoliSenanayake">
+          <img src="https://avatars.githubusercontent.com/BenoliSenanayake" width="110" style="border-radius:50%;"><br>
+          <sub><b>Benoli Senanayake</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://github.com/DinuriJayaweera">
+          <img src="https://avatars.githubusercontent.com/DinuriJayaweera" width="110" style="border-radius:50%;"><br>
+          <sub><b>Dinuri Jayaweera</b></sub>
+        </a>
+      </td>
+    </tr>
+  </table>
+</p>
 
 ---
 
-# 🔄 5. Recommended Workflow
+## 📜 License & Usage
 
-1. *(Optional)* Rebuild MAT files → `preprocess_csvs`
-2. Train & benchmark NN models → `run_benchmark`
-3. Perform feature selection → `ANOVa_steepest_gradiant`
-4. Analyse clusters → `cluster_3d`
-5. Similarity analysis → `cosine_3d`, `user_similarity_dtw`
-6. Ratio analysis → `modelratiotester`
-7. SVM optimisation → `optimization_SVM_of_model`
-8. Use generated MAT files & figures for the report
+This repository is created for **AI/ML coursework** and is **not intended for commercial use**.
+
 
 ---
 
-# 👥 Contributors
+````
 
-<div align="center">
-
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/Sithumsankajith">
-        <img src="https://avatars.githubusercontent.com/Sithumsankajith" width="120" style="border-radius:50%;"><br>
-        <sub><b>Sithum Sankajith</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/dasunikayapabandara">
-        <img src="https://avatars.githubusercontent.com/dasunikayapabandara" width="120" style="border-radius:50%;"><br>
-        <sub><b>Dasunika Yapabandara</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/BenoliSenanayake">
-        <img src="https://avatars.githubusercontent.com/BenoliSenanayake" width="120" style="border-radius:50%;"><br>
-        <sub><b>Benoli Senanayake</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/DinuriJayaweera">
-        <img src="https://avatars.githubusercontent.com/DinuriJayaweera" width="120" style="border-radius:50%;"><br>
-        <sub><b>Dinuri Jayaweera</b></sub>
-      </a>
-    </td>
-  </tr>
-</table>
-
-</div>
+If you want, tell me **which figures you already have** (PCA, ROC, DTW, etc.), and I’ll suggest exactly **which ones to convert to GIF** and where to place them in the README.
