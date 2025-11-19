@@ -25,7 +25,7 @@ numUsers = userRange_max - userRange_min + 1;
 
 % Feed forward net architecture
 trainFcn = 'trainscg';
-hiddenLayerSizes = [131];
+hiddenLayerSizes = [57];
 hiddenLayerActivationFcns = {'logsig'};
 outputLayerActivationFcn = 'tansig';
 performanceFcn = 'crossentropy';
@@ -164,7 +164,7 @@ for imposterUser = 1:numUsers
   % assert(sum(yTest == 0) == (numUsers - 1) * testSamplesPerImposter);
 
   % Create and configure the network
-  net = feedforwardnet(131, 'trainscg');
+  net = feedforwardnet( 57, 'trainscg');
   net.userdata.note = "Initial Feedforward Neural Network with selected Leave-Out Users";
   net.userdata.trainTargetImposterRatio = sprintf("1:%d", round(1/TrainTargetImposterRatio));
   net.userdata.dropoutRate = dropoutRate;

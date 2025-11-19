@@ -25,7 +25,7 @@ batchSize              = 32;
 
 % NN architecture
 trainFcn                    = 'trainscg';
-hiddenLayerSizes            = [131 65];
+hiddenLayerSizes            = [57 28];
 hiddenLayerActivationFcns   = {'tansig'; 'logsig'};
 outputLayerActivationFcn    = 'tansig';
 performanceFcn              = 'crossentropy';

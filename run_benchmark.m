@@ -133,7 +133,7 @@ for setIdx = 1:length(featureSets)
       testFeatures = normalize(testFeatures, 'range');
 
       % Neural Network setup and training
-      net = feedforwardnet(131, 'trainscg');
+      net = feedforwardnet(57, 'trainscg');
       net.performFcn = 'crossentropy';
 
       % Configure layers

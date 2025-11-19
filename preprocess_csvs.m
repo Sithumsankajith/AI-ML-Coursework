@@ -1,143 +1,241 @@
-%% CSV to MAT Pre-processing Script (v2)
-% Reads CSVs like 'U1NW_FD.csv'
-% Saves MATs like 'U01_Acc_TimeD_FreqD_FDay.mat' for the benchmark script.
+%% CSV to MAT Pre-processing Script (v3)
+% Reads RAW CSVs like 'U1NW_FD.csv' containing:
+%   [timestamp, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z]
+% Computes sliding-window Time Domain + Frequency Domain features
+% (for accelerometer only) and saves MATs like:
+%   'U01_Acc_TimeD_FreqD_FDay.mat',
+%   'U01_Acc_TimeD_FDay.mat',
+%   'U01_Acc_FreqD_FDay.mat'
+%
+% Each MAT contains ONE variable named e.g.:
+%   U01_Acc_TimeD_FreqD_FDay_data   (samples x features)
 
 clear all; close all; clc;
 
-fprintf('Starting pre-processing: Converting CSV to MAT...\n');
+fprintf('Starting pre-processing: Converting RAW CSV to MAT (features)...\n');
 
-% --- 1. USER MUST CONFIGURE THIS SECTION ---
+%% ------------------------------------------------------------------------
+% 1. USER CONFIGURATION
+% -------------------------------------------------------------------------
 
-% Define the column indices from your CSV files.
-% !! YOU MUST CHANGE THESE NUMBERS to match your CSVs !!
-% Example: If Time Domain features are columns 1 to 50
-timeD_cols = 1:3;     
-% Example: If Frequency Domain features are columns 51 to 100
-freqD_cols = 4:7;   
+% ---- Sliding window settings ----
+fs      = 31;      % sampling frequency (Hz), approx 30–32
+winSize = 128;     % samples per window (≈4 s)
+overlap = 0.5;     % 50%% overlap
+step    = round(winSize * (1 - overlap));
 
-% Define the feature sets based on the columns above
-featureSetDefinitions = {
-    % Set 1 Name         % Columns to use
-    {'Acc_TimeD_FreqD',   [timeD_cols, freqD_cols]}, ...
-    % Set 2 Name
-    {'Acc_TimeD',         timeD_cols}, ...
-    % Set 3 Name
-    {'Acc_FreqD',         freqD_cols}
-};
+% ---- Users and file naming ----
+userRange     = 1:10;
 
-% Define users
-userRange = 1:10;
-
-% --- Naming convention for SOURCE CSV files ---
-% (e.g., U1NW_FD.csv)
+% SOURCE CSV naming: e.g. 'U1NW_FD.csv'
 csvUserPrefix = 'U';
 csvUserSuffix = 'NW';
-csvDataTypes = {'FD', 'MD'}; % Suffix for CSV files
+csvDataTypes  = {'FD', 'MD'};     % FD = first day, MD = second day
 
-% --- Naming convention for OUTPUT MAT files (for benchmark.m) ---
-% (e.g., U01_Acc_TimeD_FreqD_FDay.mat)
+% OUTPUT MAT naming: e.g. 'U01_Acc_TimeD_FreqD_FDay.mat'
 matUserPrefix = 'U';
-matUserSuffix = ''; % None
-matUserFormat = '%02d'; % e.g., '01', '02'
-matDataTypes = {'FDay', 'MDay'}; % Suffix for .mat files
+matUserSuffix = '';               % none
+matUserFormat = '%02d';           % -> '01', '02', ...
+matDataTypes  = {'FDay', 'MDay'}; % correspond to FD/MD
 
-% Define source and destination folders
-sourceCsvFolder = 'dataset_csv'; % Folder with your original CSVs
-destMatFolder = 'dataset';       % Folder for the output .mat files
+% ---- Folders ----
+sourceCsvFolder = 'dataset_csv';  % folder with original RAW CSVs
+destMatFolder   = 'dataset';      % folder for the output .mat feature files
 
-% --- End of Configuration ---
-
-
-% Create the destination folder if it doesn't exist
+% Create output folder if needed
 if ~exist(destMatFolder, 'dir')
     mkdir(destMatFolder);
 end
 
-% --- 2. Main Processing Loop ---
-fprintf('Scanning for %d users...\n', length(userRange));
+fprintf('Sliding window: %d samples, %.0f%%%% overlap, fs = %.1f Hz\n', ...
+        winSize, overlap*100, fs);
+fprintf('Users: %s\n', mat2str(userRange));
 
-for user_idx = 1:length(userRange)
-    user = userRange(user_idx);
-    
-    % --- Construct SOURCE (CSV) names ---
-    % e.g., 'U' + 1 + 'NW' = 'U1NW'
-    csvUserStr = sprintf('%s%d%s', csvUserPrefix, user, csvUserSuffix);
-    
-    % --- Construct DESTINATION (MAT) names ---
-    % e.g., 'U' + '01' + '' = 'U01'
-    matUserStr = sprintf('%s%s%s', matUserPrefix, sprintf(matUserFormat, user), matUserSuffix);
+%% ------------------------------------------------------------------------
+% 2. Main Processing Loop
+% -------------------------------------------------------------------------
 
+for user = userRange
+    
+    % Build user strings
+    csvUserStr = sprintf('%s%d%s',      csvUserPrefix, user, csvUserSuffix);       % e.g. U1NW
+    matUserStr = sprintf('%s%s%s', matUserPrefix, sprintf(matUserFormat, user), matUserSuffix); % e.g. U01
+    
     for dt_idx = 1:length(csvDataTypes)
         
-        csvDataType = csvDataTypes{dt_idx}; % e.g., 'FD'
-        matDataType = matDataTypes{dt_idx}; % e.g., 'FDay'
+        csvDataType = csvDataTypes{dt_idx};   % 'FD' or 'MD'
+        matDataType = matDataTypes{dt_idx};   % 'FDay' or 'MDay'
         
-        % Construct the source CSV file name (e.g., U1NW_FD.csv)
+        % Source CSV file name & path
         csvFileName = sprintf('%s_%s.csv', csvUserStr, csvDataType);
         csvFilePath = fullfile(sourceCsvFolder, csvFileName);
         
         if ~exist(csvFilePath, 'file')
             fprintf('WARNING: CSV file not found, skipping: %s\n', csvFilePath);
-            continue; % Skip to the next file
+            continue;
         end
         
-        % Read the entire CSV file
-        fprintf('Reading: %s\n', csvFileName);
+        fprintf('\nUser %02d, %s: Reading %s\n', user, matDataType, csvFileName);
+        
+        % ---- Read raw CSV ----
         try
-            % Use readmatrix if your CSVs are all numbers, no text headers
-            all_data_from_csv = readmatrix(csvFilePath);
-            
-            % ---
-            % NOTE: If your CSV has a header row (e.g., "Feature1", "Feature2")
-            % you should use readtable instead:
-            %
-            % T = readtable(csvFilePath);
-            % all_data_from_csv = T{:,:}; % Convert table to matrix
-            % ---
-
+            raw = readmatrix(csvFilePath); % numeric, no header
         catch ME
             fprintf('Error reading %s: %s\n', csvFileName, ME.message);
             continue;
         end
         
-        % Now, create and save the 3 feature sets from this one CSV
-        for fs_idx = 1:length(featureSetDefinitions)
+        if size(raw,2) < 4
+            fprintf('ERROR: %s has <4 columns. Expected: [time,acc_x,acc_y,acc_z,...]\n', csvFileName);
+            continue;
+        end
+        
+        % Columns: 1 = time, 2:4 = accelerometer
+        acc = raw(:, 2:4);   % [acc_x, acc_y, acc_z]
+        N   = size(acc,1);
+        
+        if N < winSize
+            fprintf('Not enough samples (%d) for one window (%d). Skipping.\n', N, winSize);
+            continue;
+        end
+        
+        % Storage for this user & day
+        Acc_TimeD = [];  % time-domain only
+        Acc_FreqD = [];  % frequency-domain only
+        
+        % ---- Sliding window over samples ----
+        for startIdx = 1:step:(N - winSize + 1)
+            endIdx = startIdx + winSize - 1;
+            segAcc = acc(startIdx:endIdx, :); % window: winSize x 3
             
-            setName = featureSetDefinitions{fs_idx}{1};
-            setCols = featureSetDefinitions{fs_idx}{2};
+            td_row = [];
+            fd_row = [];
             
-            % Create the final feature set name (e.g., 'Acc_TimeD_FreqD_FDay')
-            % This name is for the .mat file, so it uses 'matDataType'
-            finalFeatureName = [setName, '_', matDataType];
-            
-            % Construct the destination .mat file name
-            % This uses 'matUserStr' (e.g., U01)
-            matFileName = sprintf('%s_%s.mat', matUserStr, finalFeatureName);
-            matFilePath = fullfile(destMatFolder, matFileName);
-            
-            % Extract the feature columns from the data
-            try
-                featureMatrix = all_data_from_csv(:, setCols);
-            catch ME
-                fprintf('Error: Could not extract columns for %s. Check your column indices. %s\n', setName, ME.message);
-                continue;
+            % For each accelerometer axis (x,y,z)
+            for axisIdx = 1:3
+                x = segAcc(:, axisIdx);
+                
+                td = extractTimeFeatures(x);
+                fd = extractFreqFeatures(x, fs);
+                
+                td_row = [td_row, td];
+                fd_row = [fd_row, fd];
             end
             
-            % --- Save the .mat file ---
-            % We create a temporary struct to save the variable with a 
-            % specific name inside the .mat file, as required by 
-            % your benchmark script's loading method.
-            
-            varName = [matUserStr, '_', finalFeatureName, '_data'];
-            dataToSave = struct();
-            dataToSave.(varName) = featureMatrix;
-            
-            fprintf('  -> Saving as: %s\n', matFileName);
-            save(matFilePath, '-struct', 'dataToSave');
-            
-        end % end loop over feature sets
-    end % end loop over data types (FD/MD)
-end % end loop over users
+            Acc_TimeD = [Acc_TimeD; td_row];
+            Acc_FreqD = [Acc_FreqD; fd_row];
+        end
+        
+        % Combined feature set: TimeD + FreqD
+        Acc_TimeD_FreqD = [Acc_TimeD, Acc_FreqD];
+        
+        % -----------------------------------------------------------------
+        % 3. Save three MAT files:
+        %    U01_Acc_TimeD_FreqD_FDay.mat
+        %    U01_Acc_TimeD_FDay.mat
+        %    U01_Acc_FreqD_FDay.mat
+        % with variables:
+        %    U01_Acc_TimeD_FreqD_FDay_data, etc.
+        % -----------------------------------------------------------------
+        
+        % --- 3a. TimeD + FreqD ---
+        finalFeatureName = ['Acc_TimeD_FreqD_', matDataType];  % e.g. 'Acc_TimeD_FreqD_FDay'
+        matFileName      = sprintf('%s_%s.mat', matUserStr, finalFeatureName);
+        matFilePath      = fullfile(destMatFolder, matFileName);
+        
+        varName          = [matUserStr, '_', finalFeatureName, '_data']; % e.g. U01_Acc_TimeD_FreqD_FDay_data
+        dataToSave       = struct();
+        dataToSave.(varName) = Acc_TimeD_FreqD;
+        fprintf('  -> Saving %s\n', matFileName);
+        save(matFilePath, '-struct', 'dataToSave');
+        
+        % --- 3b. TimeD only ---
+        finalFeatureName = ['Acc_TimeD_', matDataType];        % e.g. 'Acc_TimeD_FDay'
+        matFileName      = sprintf('%s_%s.mat', matUserStr, finalFeatureName);
+        matFilePath      = fullfile(destMatFolder, matFileName);
+        
+        varName          = [matUserStr, '_', finalFeatureName, '_data']; % e.g. U01_Acc_TimeD_FDay_data
+        dataToSave       = struct();
+        dataToSave.(varName) = Acc_TimeD;
+        fprintf('  -> Saving %s\n', matFileName);
+        save(matFilePath, '-struct', 'dataToSave');
+        
+        % --- 3c. FreqD only ---
+        finalFeatureName = ['Acc_FreqD_', matDataType];        % e.g. 'Acc_FreqD_FDay'
+        matFileName      = sprintf('%s_%s.mat', matUserStr, finalFeatureName);
+        matFilePath      = fullfile(destMatFolder, matFileName);
+        
+        varName          = [matUserStr, '_', finalFeatureName, '_data']; % e.g. U01_Acc_FreqD_FDay_data
+        dataToSave       = struct();
+        dataToSave.(varName) = Acc_FreqD;
+        fprintf('  -> Saving %s\n', matFileName);
+        save(matFilePath, '-struct', 'dataToSave');
+        
+    end % FD / MD
+end % users
 
-fprintf('\nAll CSV files processed and .mat files created in /dataset/ folder.\n');
-fprintf('You can now run your benchmark script (run_benchmark.m).\n');
+fprintf('\nAll users processed. MAT feature files are in folder: %s\n', destMatFolder);
+
+%% ------------------------------------------------------------------------
+%  Local functions: time-domain & frequency-domain features
+% -------------------------------------------------------------------------
+
+function td = extractTimeFeatures(x)
+% Time-domain features for a 1-D signal x
+    x = x(:);
+    n = numel(x);
+
+    meanX  = mean(x);
+    stdX   = std(x);
+    varX   = var(x);
+    medX   = median(x);
+    minX   = min(x);
+    maxX   = max(x);
+    rangeX = maxX - minX;
+    iqrX   = iqr(x);                 % needs Statistics toolbox
+    rmsX   = sqrt(mean(x.^2));
+    smaX   = mean(abs(x));
+    
+    if n > 1
+        zc = sum(diff(sign(x)) ~= 0) / (n - 1);  % zero-crossing rate
+    else
+        zc = 0;
+    end
+    
+    if stdX > 0
+        skewX = mean(((x - meanX)/stdX).^3);
+        kurtX = mean(((x - meanX)/stdX).^4) - 3; % excess kurtosis
+    else
+        skewX = 0;
+        kurtX = 0;
+    end
+    
+    td = [meanX, stdX, varX, medX, minX, maxX, ...
+          rangeX, iqrX, rmsX, smaX, zc, skewX, kurtX];
+end
+
+function fd = extractFreqFeatures(x, fs)
+% Frequency-domain features for a 1-D signal x
+    x = x(:);
+    N = numel(x);
+    
+    X = fft(x);
+    K = floor(N/2) + 1;        % one-sided spectrum
+    X = X(1:K);
+    mag   = abs(X);
+    freqs = (0:K-1)' * (fs / N);
+    
+    total = sum(mag) + eps;
+    p     = mag / total;
+    
+    [~, idxMax] = max(mag);
+    domFreq     = freqs(idxMax);
+    specEnergy  = sum(mag.^2);
+    specEntropy = -sum(p .* log(p + eps));
+    peakAmp     = max(mag);
+    meanFreq    = sum(freqs .* mag) / total;
+    freqVar     = sum(((freqs - meanFreq).^2) .* mag) / total;
+    
+    fd = [domFreq, specEnergy, specEntropy, ...
+          peakAmp, meanFreq, freqVar];
+end
