@@ -1,6 +1,6 @@
 # 📌 Acceleration-Based User Authentication
 
-### *AI/ML Coursework *
+### *AI/ML Coursework*
 
 This repository contains the full MATLAB implementation, experimental workflow, feature analysis, and visualisations for an **acceleration-based user authentication system** developed using smartwatch motion data.
 The project investigates whether **walking patterns** captured from inertial sensors can reliably authenticate users under realistic conditions.
