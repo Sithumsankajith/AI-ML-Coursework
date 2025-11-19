@@ -213,11 +213,37 @@ Checks biometric discriminability.
 
 ---
 
-# 👥 6. Contributors
+# 👥 Contributors
 
-* **Sithum Sankajith**
-* **Dinuri Jayaweera**
-* **Benoli Senanayake**
-* **Dasunika Yapabandara**
+<div align="center">
 
-> *This repository is built for academic coursework and not intended for commercial deployment.*
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/Sithumsankajith">
+        <img src="https://avatars.githubusercontent.com/Sithumsankajith" width="120" style="border-radius:50%;"><br>
+        <sub><b>Sithum Sankajith</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/dasunikayapabandara">
+        <img src="https://avatars.githubusercontent.com/dasunikayapabandara" width="120" style="border-radius:50%;"><br>
+        <sub><b>Dasunika Yapabandara</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/BenoliSenanayake">
+        <img src="https://avatars.githubusercontent.com/BenoliSenanayake" width="120" style="border-radius:50%;"><br>
+        <sub><b>Benoli Senanayake</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/DinuriJayaweera">
+        <img src="https://avatars.githubusercontent.com/DinuriJayaweera" width="120" style="border-radius:50%;"><br>
+        <sub><b>Dinuri Jayaweera</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
+
+</div>
