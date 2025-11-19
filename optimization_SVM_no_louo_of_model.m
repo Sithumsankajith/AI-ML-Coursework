@@ -26,7 +26,7 @@ batchSize              = 32;
 
 % NN architecture (from original no-LOU script)
 trainFcn                    = 'trainscg';
-hiddenLayerSizes            = [108 65];
+hiddenLayerSizes            = [57 28];
 hiddenLayerActivationFcns   = {'logsig'; 'logsig'};
 outputLayerActivationFcn    = 'tansig';
 performanceFcn              = 'crossentropy';
