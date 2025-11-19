@@ -1,46 +1,36 @@
-%% FeedForwardNet with Overfitting Prevention %%%%%
-
+%% FeedForwardNet with Overfitting Prevention + Feature Selection %%%%%
 % Complete User Authentication using MLP Neural Network - Binary Classification
-clear all;
-close all;
-clc;
 
+clear all; close all; clc;
 rng(100);  % For reproducibility
 
 % Define script params
 userRange_min = 1;
 userRange_max = 10;
+numUsers      = userRange_max - userRange_min + 1;
 
 % Overfitting prevention parameters
-TrainTargetImposterRatio = 1/5;  % Fixed ratio 1:5
-dropoutRate = 0.3;  % Dropout rate for regularization
-l2RegParam = 1e-4;  % L2 regularization parameter
-performanceGoal = 1e-5;  % Performance goal for training
-minGrad = 1e-6;  % Minimum gradient for training
-earlyStoppingPatience = 10;  % Patience for early stopping
-maxEpochs = 500;  % Maximum number of training epochs
-learningRate = 0.01; % Learning rate
-
-numUsers = userRange_max - userRange_min + 1;
+TrainTargetImposterRatio = 1/5;   % Fixed ratio 1:5
+dropoutRate              = 0.3;   % (defined but not used by feedforwardnet)
+l2RegParam               = 1e-4;  % L2 regularization parameter
+performanceGoal          = 1e-5;  % Performance goal for training
+minGrad                  = 1e-6;  % Minimum gradient for training
+earlyStoppingPatience    = 10;    % Patience for early stopping
+maxEpochs                = 500;   % Maximum number of training epochs
+learningRate             = 0.01;  % Learning rate
 
 %% 1. Data Loading and Preprocessing
-% Define file patterns for each user
 filePatternsTrain = 'Acc_TimeD_FreqD_FDay';
 filePatternsTest  = 'Acc_TimeD_FreqD_MDay';
 
-% Make sure current folder is the project root (where "dataset" folder is)
-% e.g., cd('C:\...\AI-ML-Coursework') before running this script
-
 fprintf('Loading data for each user...\n');
 
-% Preallocate storage datasets (so fields always exist)
+% Preallocate storage datasets
 userData = struct('trainFeatures', [], 'testFeatures', []);
 userData = repmat(userData, 1, userRange_max);
 
 for user = userRange_min:userRange_max
     userStr  = sprintf('U%02d', user);
-
-    % >>> IMPORTANT: look inside the "dataset" folder <<<
     trainFile = fullfile('dataset', [userStr '_' filePatternsTrain '.mat']);
     testFile  = fullfile('dataset', [userStr '_' filePatternsTest  '.mat']);
 
@@ -60,543 +50,417 @@ for user = userRange_min:userRange_max
     end
 end
 
-% Find minimum number of samples across users for training and testing
-minSamplesTrain = inf;
-minSamplesTest = inf;
-for user = userRange_min:userRange_max
-  if ~isempty(userData(user).trainFeatures)
-    minSamplesTrain = min(minSamplesTrain, size(userData(user).trainFeatures, 1));
-  end
-  if ~isempty(userData(user).testFeatures)
-    minSamplesTest = min(minSamplesTest, size(userData(user).testFeatures, 1));
-  end
-end
-
-% Random
-% Leave-Out Users list generation
-% leaveOutUsersList = zeros(1, numUsers); % Initialize the list
-
-% for targetUser = userRange_min:userRange_max
-%   % Generate a random number between 1 and 10 excluding the targetUser
-%   options = setdiff(1:10, targetUser); % Exclude targetUser
-%   leaveOutUsersList(targetUser) = options(randi(length(options))); % Select a random number
-% end
+% Pre-defined leave-out users list (for imposters)
 leaveOutUsersList = [6, 3, 2, 5, 6, 1, 9, 7, 7, 3];
 
 % Feature Selection Parameters
-anovaThreshold = 0.05;  % Threshold for ANOVA p-values
-topFeaturePercent = 0.75;  % Top 75% features to select
+anovaThreshold   = 0.05;  % Threshold for ANOVA p-values
+topFeaturePercent = 0.75; % Top 75% features to select
 
-% Initialize storage for selected features
 selectedFeatures = cell(numUsers, 1);
+featureAnalysis  = struct();
 
-% Initialize storage for feature analysis
-featureAnalysis = struct();
-
+%% 2. Feature Selection per User (ANOVA + MI + Gradient)
 for targetUser = userRange_min:userRange_max
-  % Prepare data for feature selection
-  X = userData(targetUser).trainFeatures;
-  y = ones(size(X, 1), 1);
-  for imposterUser = 1:numUsers
-    if imposterUser ~= targetUser && imposterUser ~= leaveOutUsersList(targetUser)
-      X = [X; userData(imposterUser).trainFeatures];
-      y = [y; zeros(size(userData(imposterUser).trainFeatures, 1), 1)];
+    if isempty(userData(targetUser).trainFeatures)
+        fprintf('User %d has no training data for feature selection. Skipping.\n', targetUser);
+        continue;
     end
-  end
 
-  % Get total number of features
-  numFeatures = size(X, 2);
-  
-  % ANOVA Feature Selection
-  pValues = zeros(1, numFeatures);
-  for i = 1:numFeatures
-    pValues(i) = anova1(X(:, i), y, 'off');
-  end
-  anovaSelected = find(pValues < anovaThreshold);
-  
-  % Mutual Information Feature Selection
-  miScores = zeros(1, numFeatures);
-  for i = 1:numFeatures
-    miScores(i) = calculate_mutual_information(X(:, i), y);
-  end
-  [~, miRanking] = sort(miScores, 'descend');
-  miSelected = miRanking(1:round(topFeaturePercent*numFeatures));
+    % Combine target vs imposters (excluding leave-out imposters)
+    X = userData(targetUser).trainFeatures;
+    y = ones(size(X, 1), 1);
+    for imposterUser = 1:numUsers
+        if imposterUser ~= targetUser && imposterUser ~= leaveOutUsersList(targetUser) ...
+                && ~isempty(userData(imposterUser).trainFeatures)
+            X = [X; userData(imposterUser).trainFeatures];
+            y = [y; zeros(size(userData(imposterUser).trainFeatures, 1), 1)];
+        end
+    end
 
-  % Steepest Gradient Feature Selection
-  net = feedforwardnet(10, 'trainscg');
-  net = train(net, X', y');
-  gradients = abs(net.IW{1});
-  [~, sgRanking] = sort(mean(gradients, 1), 'descend');
-  sgSelected = sgRanking(1:round(topFeaturePercent*numFeatures));
+    numFeatures = size(X, 2);
 
-  
-  % Plot Feature Analysis
-  figure('Name', sprintf('Feature Analysis - User %d', targetUser));
-  
-  % Plot 1: Feature Importance Scores with proper normalization
-  subplot(2,2,1);
-  
-  % Initialize feature scores matrix
-  numFeatures = size(X, 2);
-  featureScores = zeros(numFeatures, 3);
-  
-  % Process ANOVA scores (lower p-value = higher importance)
-  featureScores(:,1) = 1 - normalize(reshape(pValues, [], 1), 'range');
-  
-  % Process MI scores
-  featureScores(:,2) = normalize(reshape(miScores, [], 1), 'range');
-  
-  % Process gradient scores
-  meanGradients = mean(gradients, 1)';
-  if length(meanGradients) ~= numFeatures
-      % Interpolate gradient scores if dimensions don't match
-      meanGradients = interp1(1:length(meanGradients), meanGradients, linspace(1, length(meanGradients), numFeatures));
-  end
-  featureScores(:,3) = normalize(meanGradients, 'range');
-  
-  % Plot stacked bar chart
-  bar(featureScores, 'stacked');
-  title(sprintf('Feature Importance by Method (%d features)', numFeatures));
-  legend('ANOVA', 'MI', 'Gradient');
-  xlabel('Feature Index');
-  ylabel('Normalized Importance');
-  
-  % Calculate weighted combined scores
-  weights = [0.4, 0.3, 0.3]; % Weights for ANOVA, MI, and Gradient
-  combinedScores = featureScores * weights';
-  [sortedScores, sortedIdx] = sort(combinedScores, 'descend');
-  
-  % Update selected features
-  selectedFeatureIdx = sortedIdx(1:round(topFeaturePercent*numFeatures));
-  
-  % Plot 2: Correlation Matrix
-  subplot(2,2,2);
-  correlationMatrix = corr(X(:, selectedFeatureIdx));
-  imagesc(correlationMatrix);
-  colormap(jet);
-  colorbar;
-  title(sprintf('Feature Correlation Matrix\n(%d features)', length(selectedFeatureIdx)));
-  
-  % Plot 3: Box Plots for Top Features
-  subplot(2,2,3);
-  topN = min(5, length(selectedFeatureIdx));
-  topFeatures = selectedFeatureIdx(1:topN);
-  
-  % Prepare data for boxplot
-  boxData = [];
-  groupLabels = {};
-  for i = 1:topN
-      featureValues = X(:, topFeatures(i));
-      boxData = [boxData; featureValues];
-      groupLabels = [groupLabels; repmat({sprintf('Feature %d', i)}, length(featureValues), 1)];
-  end
-  
-  % Create grouped boxplot
-  boxplot(boxData, groupLabels);
-  hold on;
-  % Add color coding for genuine/impostor
-  scatter(find(y==1), boxData(y==1), 10, 'b', '.');
-  scatter(find(y==0), boxData(y==0), 10, 'r', '.');
-  hold off;
-  
-  title(sprintf('Top %d Features Distribution', topN));
-  xlabel('Feature Index');
-  ylabel('Feature Value');
-  legend('Genuine', 'Impostor', 'Location', 'eastoutside');
-  grid on;
-  
-  % Plot 4: Method Contribution
-  subplot(2,2,4);
-  methodContribution = sum(featureScores, 1);
-  if all(isfinite(methodContribution))
-      pie(methodContribution);
-      title('Feature Selection Method Contribution');
-      legend({'ANOVA', 'MI', 'Gradient'}, 'Location', 'eastoutside');
-  else
-      warning('Non-finite values found in method contribution, skipping pie chart.');
-  end
+    %% ANOVA Feature Selection
+    pValues = zeros(1, numFeatures);
+    for i = 1:numFeatures
+        pValues(i) = anova1(X(:, i), y, 'off');
+    end
+    anovaSelected = find(pValues < anovaThreshold);
 
-  % Additional visualization: Feature importance trend
-  figure('Name', sprintf('Feature Importance Trends - User %d', targetUser));
-  
-  % Plot combined importance scores
-  subplot(2,1,1);
-  combinedScores = mean(featureScores, 2);
-  [sortedScores, sortedIdx] = sort(combinedScores, 'descend');
-  bar(sortedScores(1:min(20,end)));
-  title('Top 20 Features by Combined Importance');
-  xlabel('Feature Rank');
-  ylabel('Importance Score');
-  grid on;
-  
-  % Plot individual method contributions for top features
-  subplot(2,1,2);
-  topK = min(20, length(sortedIdx));
-  topFeatureScores = featureScores(sortedIdx(1:topK), :);
-  bar(topFeatureScores, 'grouped');
-  title('Method Contributions for Top Features');
-  xlabel('Feature Rank');
-  ylabel('Score');
-  legend('ANOVA', 'MI', 'Gradient');
-  grid on;
+    %% Mutual Information Feature Selection
+    miScores = zeros(1, numFeatures);
+    for i = 1:numFeatures
+        miScores(i) = calculate_mutual_information(X(:, i), y);
+    end
+    [~, miRanking] = sort(miScores, 'descend');
+    miSelected = miRanking(1:round(topFeaturePercent*numFeatures));
 
-  featureAnalysis(targetUser).scores = featureScores;
-  featureAnalysis(targetUser).combinedScores = combinedScores;
-  featureAnalysis(targetUser).selectedFeatures = selectedFeatureIdx;
-  featureAnalysis(targetUser).correlationMatrix = correlationMatrix;
-  
+    %% Steepest Gradient Feature Selection (small helper NN)
+    netFS = feedforwardnet(10, 'trainscg');
+    netFS.trainParam.showWindow = false;
+    netFS.trainParam.showCommandLine = false;
+    netFS = train(netFS, X', y');
+    gradients = abs(netFS.IW{1});
+    meanGradients = mean(gradients, 1)';
 
-  fprintf('\nFeature Selection Summary for User %d:\n', targetUser);
-  fprintf('Top 5 features: %s\n', mat2str(selectedFeatureIdx(1:min(5,end))));
-  fprintf('Average correlation: %.4f\n', mean(abs(correlationMatrix(triu(true(size(correlationMatrix)),1)))));
-  fprintf('Number of selected features: %d\n', length(selectedFeatureIdx));
-  
-  % Store final selected feature indices
-  selectedFeatures{targetUser} = selectedFeatureIdx;
-  
-  % Print selected features and their counts
-  fprintf('\nFeature Selection Results for User %d:\n', targetUser);
-  fprintf('ANOVA selected: %d features\n', length(anovaSelected));
-  fprintf('MI selected: %d features\n', length(miSelected));
-  fprintf('SG selected: %d features\n', length(sgSelected));
-  fprintf('Combined unique features: %d\n', length(selectedFeatures{targetUser}));
+    if length(meanGradients) ~= numFeatures
+        % Interpolate gradient scores if dimensions don't match
+        meanGradients = interp1(1:length(meanGradients), meanGradients, ...
+                                linspace(1, length(meanGradients), numFeatures));
+    end
+    [~, sgRanking] = sort(meanGradients, 'descend');
+    sgSelected = sgRanking(1:round(topFeaturePercent*numFeatures));
 
-  % Additional Plot: Top Features Rankings
-  figure('Name', sprintf('Feature Importance - User %d', targetUser));
-  
-  % Calculate combined importance score
-  pScores = normalize(pValues, 'range');
-  mScores = normalize(miScores, 'range');
-  gScores = normalize(mean(gradients, 1), 'range');
-  
-  % Ensure all scores have the same size
-  minLength = min([length(pScores), length(mScores), length(gScores)]);
-  pScores = pScores(1:minLength);
-  mScores = mScores(1:minLength);
-  gScores = gScores(1:minLength);
-  
-  combinedScores = pScores + mScores + gScores;
-  [sortedScores, sortedIdx] = sort(combinedScores, 'descend');
-  
-  % Plot top 20 features with their individual scores
-  topK = min(20, length(sortedIdx));
-  subplot(2,1,1);
-  bar(sortedScores(1:topK));
-  title('Top 20 Features - Combined Score');
-  xlabel('Rank');
-  ylabel('Combined Score');
-  
-  % Show individual method scores for top features
-  subplot(2,1,2);
-  topFeatureScores = [pScores(sortedIdx(1:topK)); 
-                      mScores(sortedIdx(1:topK));
-                      gScores(sortedIdx(1:topK))];
-  bar(normalize(topFeatureScores', 'range'));
-  title('Individual Method Scores for Top Features');
-  xlabel('Feature Rank');
-  ylabel('Normalized Score');
-  legend('ANOVA', 'MI', 'Gradient');
-  
- 
-  % Store feature analysis results
-  featureAnalysis(targetUser).pValues = pValues;
-  featureAnalysis(targetUser).miScores = miScores;
-  featureAnalysis(targetUser).gradientScores = mean(gradients,1);
-  featureAnalysis(targetUser).selectedFeatures = selectedFeatureIdx;
-  featureAnalysis(targetUser).correlationMatrix = correlationMatrix;
-  featureAnalysis(targetUser).combinedScores = combinedScores;
-  
-  % Print feature analysis summary
-  fprintf('\nFeature Analysis Summary for User %d:\n', targetUser);
-  fprintf('Top 5 features by combined importance: %s\n', mat2str(sortedIdx(1:5)));
-  fprintf('Average correlation between selected features: %.4f\n', ...
-          mean(abs(correlationMatrix(triu(true(size(correlationMatrix)),1)))));
+    %% Build normalized feature importance matrix
+    featureScores = zeros(numFeatures, 3);
+    % ANOVA: lower p => more important
+    featureScores(:,1) = 1 - normalize(pValues(:), 'range');
+    featureScores(:,2) = normalize(miScores(:), 'range');
+    featureScores(:,3) = normalize(meanGradients(:), 'range');
+
+    % Combined weighted score
+    weights        = [0.4, 0.3, 0.3];
+    combinedScores = featureScores * weights';
+    [sortedScores, sortedIdx] = sort(combinedScores, 'descend'); %#ok<ASGLU>
+
+    selectedFeatureIdx = sortedIdx(1:round(topFeaturePercent*numFeatures));
+
+    % Correlation matrix over selected features
+    correlationMatrix = corr(X(:, selectedFeatureIdx));
+
+    %% (Optional) Plots – keep for report
+    figure('Name', sprintf('Feature Analysis - User %d', targetUser));
+
+    % 1) Stacked importance
+    subplot(2,2,1);
+    bar(featureScores, 'stacked');
+    title(sprintf('Feature Importance by Method (%d features)', numFeatures));
+    legend('ANOVA', 'MI', 'Gradient');
+    xlabel('Feature Index'); ylabel('Normalized Importance');
+
+    % 2) Correlation matrix
+    subplot(2,2,2);
+    imagesc(correlationMatrix);
+    colormap(jet); colorbar;
+    title(sprintf('Feature Correlation Matrix (%d features)', length(selectedFeatureIdx)));
+
+    % 3) Boxplots for top 5 features
+    subplot(2,2,3);
+    topN       = min(5, length(selectedFeatureIdx));
+    topFeatures = selectedFeatureIdx(1:topN);
+    boxData    = X(:, topFeatures);
+    boxplot(boxData, 'Labels', arrayfun(@(i) sprintf('F%d', i), 1:topN, 'UniformOutput', false));
+    title(sprintf('Top %d Features Distribution', topN));
+    xlabel('Feature'); ylabel('Value'); grid on;
+
+    % 4) Method contribution pie
+    subplot(2,2,4);
+    methodContribution = sum(featureScores, 1);
+    if all(isfinite(methodContribution))
+        pie(methodContribution);
+        title('Feature Selection Method Contribution');
+        legend({'ANOVA', 'MI', 'Gradient'}, 'Location', 'eastoutside');
+    end
+
+    % Additional feature importance trends
+    figure('Name', sprintf('Feature Importance Trends - User %d', targetUser));
+    subplot(2,1,1);
+    avgScores = mean(featureScores, 2);
+    [sortedAvg, sortedIdx2] = sort(avgScores, 'descend');
+    bar(sortedAvg(1:min(20,end)));
+    title('Top 20 Features by Combined Importance');
+    xlabel('Feature Rank'); ylabel('Importance'); grid on;
+
+    subplot(2,1,2);
+    topK = min(20, length(sortedIdx2));
+    topFeatureScores = featureScores(sortedIdx2(1:topK), :);
+    bar(topFeatureScores, 'grouped');
+    title('Method Contributions for Top Features');
+    xlabel('Feature Rank'); ylabel('Score');
+    legend('ANOVA', 'MI', 'Gradient'); grid on;
+
+    %% Store feature analysis
+    featureAnalysis(targetUser).pValues          = pValues;
+    featureAnalysis(targetUser).miScores         = miScores;
+    featureAnalysis(targetUser).gradientScores   = meanGradients';
+    featureAnalysis(targetUser).scores           = featureScores;
+    featureAnalysis(targetUser).combinedScores   = combinedScores;
+    featureAnalysis(targetUser).selectedFeatures = selectedFeatureIdx;
+    featureAnalysis(targetUser).correlationMatrix = correlationMatrix;
+
+    selectedFeatures{targetUser} = selectedFeatureIdx;
+
+    fprintf('\nFeature Selection Summary for User %d:\n', targetUser);
+    fprintf('Top 5 selected features: %s\n', mat2str(selectedFeatureIdx(1:min(5,end))));
+    fprintf('ANOVA selected: %d\n', length(anovaSelected));
+    fprintf('MI selected:    %d\n', length(miSelected));
+    fprintf('SG selected:    %d\n', length(sgSelected));
+    fprintf('Combined unique features: %d\n', length(selectedFeatureIdx));
+    fprintf('Avg |correlation| among selected: %.4f\n', ...
+        mean(abs(correlationMatrix(triu(true(size(correlationMatrix)),1)))));
 end
 
-% Train one model for each user (one-vs-all approach)
-models = cell(numUsers, 1);
+%% 3. Model Training and Evaluation (one-vs-all)
 
-
-userMetrics = zeros(numUsers, 15);  % Updated to 15 columns
-
-% Initialize results storage
-userMetrics = zeros(numUsers, 15);
-userPerformance = zeros(numUsers, 3); % For timing, memory, throughput
+models            = cell(numUsers, 1);
+userMetrics       = zeros(numUsers, 14); % [10 metrics + 4 size stats]
+userPerformance   = zeros(numUsers, 3);  % [totalTime, memoryMB, throughput]
 userSimilarityData = cell(3, numUsers, numUsers);
 
 for targetUser = userRange_min:userRange_max
-  % Prepare Training set with selected features
-  selectedIdx = selectedFeatures{targetUser};
-  trainTargetSampleCount = size(userData(targetUser).trainFeatures, 1);
-  trainImposterSampleCount = trainTargetSampleCount*(1/TrainTargetImposterRatio);
-  trainSamplesPerImposter = floor(trainImposterSampleCount/(numUsers-1));
-
-  XTrain = [userData(targetUser).trainFeatures(:, selectedIdx)];
-  yTrain = ones(trainTargetSampleCount, 1);
-  trainImposterFeatures = [];
-  trainImposterLabels = [];
-  for imposterUser = 1:numUsers
-    if imposterUser ~= targetUser && imposterUser ~= leaveOutUsersList(targetUser)
-      selectedIdx = randperm(size(userData(imposterUser).trainFeatures, 1), trainSamplesPerImposter);
-      trainImposterFeatures = [trainImposterFeatures; userData(imposterUser).trainFeatures(selectedIdx, selectedFeatures{targetUser})];
-      trainImposterLabels = [trainImposterLabels; zeros(trainSamplesPerImposter, 1)];
+    if isempty(userData(targetUser).trainFeatures) || isempty(selectedFeatures{targetUser})
+        fprintf('\nUser %d: Missing train data or selected features. Skipping model.\n', targetUser);
+        continue;
     end
-  end
 
-  XTrain = [XTrain; trainImposterFeatures];
-  yTrain = [yTrain; trainImposterLabels];
+    fprintf('\n===== Training model for User %d =====\n', targetUser);
 
-  % Verify the train classes are balanced to the given ratio
-  assert(sum(yTrain == 1) == trainTargetSampleCount);
-  %assert(sum(yTrain == 0) == trainImposterSampleCount-trainSamplesPerImposter);
+    selIdx = selectedFeatures{targetUser};
 
-  % Prepare Testing set with selected features
-  testTargetSampleCount = size(userData(targetUser).testFeatures, 1);
-  % testImposterSampleCount = trainTargetSampleCount;
-  testImposterSampleCount = 324;
-  testSamplesPerImposter = floor(testImposterSampleCount/(numUsers-1));
+    % Training set
+    trainTargetSampleCount   = size(userData(targetUser).trainFeatures, 1);
+    trainImposterSampleCount = trainTargetSampleCount * (1/TrainTargetImposterRatio);
+    trainSamplesPerImposter  = max(floor(trainImposterSampleCount/(numUsers-1)), 1);
 
-  XTest = [userData(targetUser).testFeatures(:, selectedFeatures{targetUser})];
-  yTest = ones(testTargetSampleCount, 1);
+    XTrain = userData(targetUser).trainFeatures(:, selIdx);
+    yTrain = ones(trainTargetSampleCount, 1);
 
-  testImposterFeatures = [];
-  testImposterLabels = [];
-  testUserLabels = ones(testTargetSampleCount, 1) * targetUser;
-
-  for imposterUser = 1:numUsers
-    if imposterUser ~= targetUser
-      selectedIdx = randperm(size(userData(imposterUser).testFeatures, 1), testSamplesPerImposter);
-      testImposterFeatures = [testImposterFeatures; userData(imposterUser).testFeatures(selectedIdx, selectedFeatures{targetUser})];
-      testImposterLabels = [testImposterLabels; zeros(testSamplesPerImposter, 1)];
-      testUserLabels = [testUserLabels; ones(testSamplesPerImposter, 1) * imposterUser];
+    trainImposterFeatures = [];
+    trainImposterLabels   = [];
+    for imposterUser = 1:numUsers
+        if imposterUser ~= targetUser && imposterUser ~= leaveOutUsersList(targetUser) ...
+                && ~isempty(userData(imposterUser).trainFeatures)
+            available = size(userData(imposterUser).trainFeatures, 1);
+            k         = min(trainSamplesPerImposter, available);
+            idx       = randperm(available, k);
+            trainImposterFeatures = [trainImposterFeatures;
+                userData(imposterUser).trainFeatures(idx, selIdx)];
+            trainImposterLabels = [trainImposterLabels; zeros(k, 1)];
+        end
     end
-  end
 
-  XTest = [XTest; testImposterFeatures];
-  yTest = [yTest; testImposterLabels];
+    if isempty(trainImposterFeatures)
+        fprintf('  User %d: no imposter training samples. Skipping.\n', targetUser);
+        continue;
+    end
 
-  % Verify the test classes are balanced
-  assert(sum(yTest == 1) == testTargetSampleCount);
-  assert(sum(yTest == 0) == testImposterSampleCount);
+    XTrain = [XTrain; trainImposterFeatures];
+    yTrain = [yTrain; trainImposterLabels];
 
-  % Create and configure the network
-  net = feedforwardnet(131, 'trainscg');
-  net.userdata.note = "Initial Feedforward Neural Network with random Leave-Out Users";
-  net.userdata.trainTargetImposterRatio = sprintf("1:%d", round(1/TrainTargetImposterRatio));
-  net.userdata.dropoutRate = dropoutRate;
-  net.userdata.l2RegParam = l2RegParam;
-  net.userdata.performanceGoal = performanceGoal;
-  net.userdata.minGrad = minGrad;
-  net.userdata.earlyStoppingPatience = earlyStoppingPatience;
-  net.userdata.maxEpochs = maxEpochs;
-  net.userdata.learningRate = learningRate;
-  net.userdata.targetUser = sprintf('User %d', targetUser);
-  net.performFcn = 'crossentropy';
+    % Verify ratio
+    fprintf('  Train positives: %d, negatives: %d\n', sum(yTrain==1), sum(yTrain==0));
 
-  % Configure layers
-  net.layers{1}.transferFcn = 'logsig';
-  net.layers{end}.transferFcn = 'tansig';
+    % Testing set
+    if isempty(userData(targetUser).testFeatures)
+        fprintf('  User %d has no test data. Skipping.\n', targetUser);
+        continue;
+    end
 
-  % Configure training parameters
-  net.trainParam.epochs = maxEpochs;
-  net.trainParam.goal = performanceGoal;
-  net.trainParam.min_grad = minGrad;
-  net.performParam.regularization = l2RegParam;
-  net.trainParam.max_fail = earlyStoppingPatience;
-  net.trainParam.lr = learningRate;
+    testTargetSampleCount   = size(userData(targetUser).testFeatures, 1);
+    testImposterSampleCount = 324; % fixed as per original script
+    testSamplesPerImposter  = max(floor(testImposterSampleCount/(numUsers-1)), 1);
 
-  % Train the network
-  tic;
-  [net, tr] = train(net, XTrain', yTrain');
-  trainTime = toc;
+    XTest = userData(targetUser).testFeatures(:, selIdx);
+    yTest = ones(testTargetSampleCount, 1);
+    testUserLabels = ones(testTargetSampleCount, 1) * targetUser;
 
-  % Store the model
-  models{targetUser} = net;
+    testImposterFeatures = [];
+    testImposterLabels   = [];
 
-  % Measure memory usage
-  modelInfo = whos('net');
-  memoryUsage = modelInfo.bytes / (1024^2); % Convert to MB
+    for imposterUser = 1:numUsers
+        if imposterUser ~= targetUser && ~isempty(userData(imposterUser).testFeatures)
+            available = size(userData(imposterUser).testFeatures, 1);
+            k         = min(testSamplesPerImposter, available);
+            idx       = randperm(available, k);
+            testImposterFeatures = [testImposterFeatures;
+                userData(imposterUser).testFeatures(idx, selIdx)];
+            testImposterLabels = [testImposterLabels; zeros(k, 1)];
+            testUserLabels     = [testUserLabels; imposterUser * ones(k,1)];
+        end
+    end
 
-  % Evaluate Network & Calculate metrics
-  tic;
-  yPred = net(XTest')';
-  inferenceTime = toc;
-  throughput = size(XTest, 1) / inferenceTime;
+    if isempty(testImposterFeatures)
+        fprintf('  User %d: no imposter test samples. Skipping.\n', targetUser);
+        continue;
+    end
 
-  % Store raw predictions for detailed analysis
-  rawPredictions = yPred;
-  
-  % Convert to binary predictions
-  yPred = yPred > 0.5;
-  yPred = double(yPred);
+    XTest = [XTest; testImposterFeatures];
+    yTest = [yTest; testImposterLabels];
 
-  % Calculate confusion matrix elements
-  tp = sum(yPred == 1 & yTest == 1);  % True Positives
-  tn = sum(yPred == 0 & yTest == 0);  % True Negatives
-  fp = sum(yPred == 1 & yTest == 0);  % False Positives
-  fn = sum(yPred == 0 & yTest == 1);  % False Negatives
+    fprintf('  Test positives: %d, negatives: %d\n', sum(yTest==1), sum(yTest==0));
 
-  % Calculate detailed metrics
-  genuinePrecision = tp / (tp + fp + eps);  % Precision for genuine attempts
-  impostorPrecision = tn / (tn + fn + eps); % Precision for impostor attempts
-  
-  % Overall precision (weighted average)
-  precision = (genuinePrecision * sum(yTest == 1) + impostorPrecision * sum(yTest == 0)) / length(yTest);
-   % Overall precision (weighted average)
-  Precision = (genuinePrecision * sum(yTest == 1) + impostorPrecision * sum(yTest == 0)) / length(yTest);
+    %% Neural Network definition
+    net = feedforwardnet(57, 'trainscg');
+    net.userdata.note                     = "Feedforward NN with ANOVA+MI+Gradient features (LOU)";
+    net.userdata.trainTargetImposterRatio = sprintf("1:%d", round(1/TrainTargetImposterRatio));
+    net.userdata.dropoutRate              = dropoutRate;
+    net.userdata.l2RegParam               = l2RegParam;
+    net.userdata.performanceGoal          = performanceGoal;
+    net.userdata.minGrad                  = minGrad;
+    net.userdata.earlyStoppingPatience    = earlyStoppingPatience;
+    net.userdata.maxEpochs                = maxEpochs;
+    net.userdata.learningRate             = learningRate;
+    net.userdata.targetUser               = sprintf('User %d', targetUser);
 
-  fprintf('Overall Precision: %.2f%%\n', userMetrics(targetUser, 2)*100);
+    net.performFcn = 'crossentropy';
+    net.layers{1}.transferFcn  = 'logsig';
+    net.layers{end}.transferFcn = 'tansig';
 
-  
-  % Calculate other metrics
-  recall = tp / (tp + fn + eps);
-  f1_score = 2 * (precision * recall) / (precision + recall + eps);
-  specificity = tn / (tn + fp + eps);
-  accuracy = (tp + tn) / (tp + tn + fp + fn);
+    net.trainParam.epochs   = maxEpochs;
+    net.trainParam.goal     = performanceGoal;
+    net.trainParam.min_grad = minGrad;
+    net.performParam.regularization = l2RegParam;
+    net.trainParam.max_fail = earlyStoppingPatience;
+    net.trainParam.lr       = learningRate;
 
-  fpr = fp / (fp + tn + eps);
-  fnr = fn / (fn + tp + eps);
-  eer = (fnr + fpr) / 2;
+    % Train network
+    tic;
+    [net, tr] = train(net, XTrain', yTrain');
+    trainTime = toc;
 
-  mcc = ((tp * tn) - (fp * fn)) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn) + eps);
+    models{targetUser} = net;
 
-  % Calculate ROC and AUC
-  [X,Y,T,AUC] = perfcurve(yTest, rawPredictions, 1);
+    modelInfo   = whos('net');
+    memoryUsage = modelInfo.bytes / (1024^2); % MB
 
-  % Plot detailed confusion matrix with actual values
-  figure('Name', sprintf('Detailed Confusion Matrix - User %d', targetUser));
-  cm = confusionchart(yTest, yPred);
-  cm.Title = sprintf('Confusion Matrix - User %d\nTP=%d, TN=%d, FP=%d, FN=%d', targetUser, tp, tn, fp, fn);
-  cm.RowSummary = 'row-normalized';
-  cm.ColumnSummary = 'column-normalized';
+    %% Evaluation
+    tic;
+    yPredProb     = net(XTest')';
+    inferenceTime = toc;
+    throughput    = size(XTest, 1) / max(inferenceTime, eps);
 
-  % Store performance metrics
-  userPerformance(targetUser, :) = [trainTime + inferenceTime, memoryUsage, throughput];
-  % Store Similarities
-  modelUserSimilarities = [testUserLabels, yPred];
+    userPerformance(targetUser,:) = [trainTime + inferenceTime, memoryUsage, throughput];
 
-  yPred = yPred > 0.5;
-  yPred = double(yPred);
+    % Binary decisions
+    yPredBin = double(yPredProb > 0.5);
 
-  tp = sum(yPred & yTest);
-  fp = sum(yPred & ~yTest);
-  fn = sum(~yPred & yTest);
-  tn = sum(~yPred & ~yTest);
+    % Confusion matrix terms
+    tp = sum(yPredBin == 1 & yTest == 1);
+    tn = sum(yPredBin == 0 & yTest == 0);
+    fp = sum(yPredBin == 1 & yTest == 0);
+    fn = sum(yPredBin == 0 & yTest == 1);
 
-  precision = tp/(tp + fp);
-  recall = tp/(tp + fn);
-  f1_score = 2 * (precision * recall)/(precision + recall);
-  specificity = tn/(tn + fp);
-  accuracy = (tp + tn)/(tp + tn + fp + fn);
+    % Metrics
+    epsVal     = 1e-12;
+    precision  = tp / max(tp + fp, epsVal);
+    recall     = tp / max(tp + fn, epsVal);
+    specificity= tn / max(tn + fp, epsVal);
+    accuracy   = (tp + tn) / max(tp + tn + fp + fn, epsVal);
+    f1_score   = 2 * precision * recall / max(precision + recall, epsVal);
 
-  fpr = fp/(fp+tn);
-  fnr = fn/(fn+tp);
-  eer = (fnr+fpr)/2;
+    fpr = fp / max(fp + tn, epsVal);
+    fnr = fn / max(fn + tp, epsVal);
+    eer = (fpr + fnr) / 2;
 
-  mcc = ((tp*tn)-(fp*fn))/sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn));
+    mcc_num = (tp * tn) - (fp * fn);
+    mcc_den = sqrt(max((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn), epsVal));
+    mcc     = mcc_num / max(mcc_den, epsVal);
 
-  [X,Y,T,AUC] = perfcurve(yTest, yPred, true);
+    % ROC & AUC (use continuous outputs)
+    [Xroc,Yroc,~,AUC] = perfcurve(yTest, yPredProb, 1);
 
-  % Calculate & Store Similarity stats
-  % Precompute statistics matrices
-  similarity_means = zeros(1, numUsers);
-  similarity_mids = zeros(1, numUsers);
-  similarity_mid_variations = zeros(1, numUsers);
+    % Store similarities using probabilities
+    modelUserSimilarities = [testUserLabels, yPredProb];
 
-  for user = userRange_min:userRange_max
-    indices = find(modelUserSimilarities(:, 1) == user);
-    similarity_means(1, user) = mean(modelUserSimilarities(indices, 2));
-    similarity_min = min(modelUserSimilarities(indices, 2));
-    similarity_max = max(modelUserSimilarities(indices, 2));
-    similarity_mids(1, user) = (similarity_max + similarity_min)/2;
-    similarity_mid_variations(1, user) = similarity_max - similarity_mids(user);
-  end
+    % Similarity statistics
+    similarity_means          = zeros(1, numUsers);
+    similarity_mids           = zeros(1, numUsers);
+    similarity_mid_variations = zeros(1, numUsers);
 
-  % Store similarity data
-  userSimilarityData(1, targetUser, :) = num2cell(similarity_means);
-  userSimilarityData(2, targetUser, :) = num2cell(similarity_mids);
-  userSimilarityData(3, targetUser, :) = num2cell(similarity_mid_variations);
+    for u = userRange_min:userRange_max
+        idxu = (modelUserSimilarities(:,1) == u);
+        if any(idxu)
+            vals = modelUserSimilarities(idxu,2);
+            similarity_means(1,u) = mean(vals);
+            vmin = min(vals); vmax = max(vals);
+            similarity_mids(1,u)           = (vmax + vmin)/2;
+            similarity_mid_variations(1,u) = vmax - similarity_mids(1,u);
+        end
+    end
 
+    userSimilarityData(1, targetUser, :) = num2cell(similarity_means);
+    userSimilarityData(2, targetUser, :) = num2cell(similarity_mids);
+    userSimilarityData(3, targetUser, :) = num2cell(similarity_mid_variations);
 
-  userMetrics(targetUser, :) = [accuracy, precision, recall, specificity, ...
-    f1_score, mcc, fpr*100, fnr*100, eer*100, AUC, Precision , ...
-    size(XTrain, 1), trainTargetSampleCount, trainImposterSampleCount, ...
-    size(XTest, 1)];
-  
-  % Display comprehensive results for each user
-  fprintf('\n==== Individual User Performance ====\n');
-  fprintf('\nUser %d Results:\n', targetUser);
-  fprintf('Accuracy: %.2f%%\n', userMetrics(targetUser, 1)*100);
-  fprintf('Overall Precision: %.2f%%\n', userMetrics(targetUser, 2)*100);
-  fprintf('Recall: %.2f%%\n', userMetrics(targetUser, 3)*100);
-  fprintf('Specificity: %.2f%%\n', userMetrics(targetUser, 4)*100);
-  fprintf('F1-Score: %.2f%%\n', userMetrics(targetUser, 5)*100);
-  fprintf('Matthews Correlation Coefficient: %.4f\n', userMetrics(targetUser, 6));
-  fprintf('False Acceptance Rate: %.2f%%\n', userMetrics(targetUser, 7));
-  fprintf('False Rejection Rate: %.2f%%\n', userMetrics(targetUser, 8));
-  fprintf('Equal Error Rate: %.2f%%\n', userMetrics(targetUser, 9));
-  fprintf('AUC Score: %.4f\n', userMetrics(targetUser, 10));
-  fprintf('Training Time: %.4f seconds\n', userPerformance(targetUser, 1));
-  fprintf('Memory Usage: %.2f MB\n', userPerformance(targetUser, 2));
-  fprintf('Throughput: %.2f samples/second\n', userPerformance(targetUser, 3));
+    % Store metrics row
+    userMetrics(targetUser,:) = [ ...
+        accuracy, precision, recall, specificity, ...
+        f1_score, mcc, fpr*100, fnr*100, eer*100, AUC, ...
+        size(XTrain,1), trainTargetSampleCount, trainImposterSampleCount, ...
+        size(XTest,1) ...
+    ];
 
-  % Plot confusion matrix
-  figure;
-  plotconfusion(yTest', yPred');
-  title(sprintf('Confusion Matrix - User %d', targetUser));
+    % Display per-user summary
+    fprintf('\n==== Individual User Performance ====\n');
+    fprintf('User %d Results:\n', targetUser);
+    fprintf('Accuracy:   %.2f%%\n', accuracy*100);
+    fprintf('Precision:  %.2f%%\n', precision*100);
+    fprintf('Recall:     %.2f%%\n', recall*100);
+    fprintf('Specificity:%.2f%%\n', specificity*100);
+    fprintf('F1-Score:   %.2f%%\n', f1_score*100);
+    fprintf('MCC:        %.4f\n', mcc);
+    fprintf('FAR:        %.2f%%\n', fpr*100);
+    fprintf('FRR:        %.2f%%\n', fnr*100);
+    fprintf('EER:        %.2f%%\n', eer*100);
+    fprintf('AUC:        %.4f\n', AUC);
+    fprintf('Training+Inference Time: %.4f s\n', trainTime + inferenceTime);
+    fprintf('Memory Usage:            %.2f MB\n', memoryUsage);
+    fprintf('Throughput:              %.2f samples/s\n', throughput);
 
-  % Plot ROC curve
-  figure;
-  plot(X,Y);
-  xlabel('False Positive Rate');
-  ylabel('True Positive Rate');
-  title(sprintf('ROC Curve - User %d (AUC = %.3f)', targetUser, AUC));
-  grid on;
+    % Confusion chart
+    figure('Name', sprintf('Confusion Matrix - User %d', targetUser));
+    cm = confusionchart(yTest, yPredBin);
+    cm.Title = sprintf('Confusion Matrix - User %d', targetUser);
+    cm.RowSummary = 'row-normalized';
+    cm.ColumnSummary = 'column-normalized';
+
+    % ROC curve
+    figure('Name', sprintf('ROC - User %d', targetUser));
+    plot(Xroc,Yroc);
+    xlabel('False Positive Rate'); ylabel('True Positive Rate');
+    title(sprintf('ROC Curve - User %d (AUC = %.3f)', targetUser, AUC));
+    grid on;
 end
 
-% Compute average metrics
-avgMetrics = mean(userMetrics, 1);
-avgPerformance = mean(userPerformance, 1);
-avgOverallPrecision = mean(Precision);
+%% 4. Averages & Summary
 
-% Create comprehensive results structure
-results = struct(...
-  'Ratio', '1:6', ...
-  'AvgAccuracy', avgMetrics(1)*100, ...
-  'AvgOverallPrecision', avgMetrics(11)*100, ...
-  'AvgRecall', avgMetrics(3)*100, ...
-  'AvgSpecificity', avgMetrics(4)*100, ...
-  'AvgF1Score', avgMetrics(5)*100, ...
-  'AvgMCC', avgMetrics(6), ...
-  'AvgFAR', avgMetrics(7), ...
-  'AvgFRR', avgMetrics(8), ...
-  'AvgEER', avgMetrics(9), ...
-  'AvgAUC', avgMetrics(10), ...
-  'AvgTrainingSetSize', avgMetrics(11), ...
-  'AvgTrainTargetSamples', avgMetrics(12), ...
-  'AvgTrainImposterSamples', avgMetrics(13), ...
-  'AvgTestSetSize', avgMetrics(14), ...
-  'AvgTotalTime', avgPerformance(1), ...
-  'AvgMemoryUsage', avgPerformance(2), ...
-  'AvgThroughput', avgPerformance(3));
+avgMetrics     = mean(userMetrics, 1, 'omitnan');
+avgPerformance = mean(userPerformance, 1, 'omitnan');
 
-% Format and display neural network details
+results = struct( ...
+  'Ratio',                  '1:5', ...
+  'AvgAccuracy',            avgMetrics(1)*100, ...
+  'AvgPrecision',           avgMetrics(2)*100, ...
+  'AvgRecall',              avgMetrics(3)*100, ...
+  'AvgSpecificity',         avgMetrics(4)*100, ...
+  'AvgF1Score',             avgMetrics(5)*100, ...
+  'AvgMCC',                 avgMetrics(6), ...
+  'AvgFAR',                 avgMetrics(7), ...
+  'AvgFRR',                 avgMetrics(8), ...
+  'AvgEER',                 avgMetrics(9), ...
+  'AvgAUC',                 avgMetrics(10), ...
+  'AvgTrainingSetSize',     avgMetrics(11), ...
+  'AvgTrainTargetSamples',  avgMetrics(12), ...
+  'AvgTrainImposterSamples',avgMetrics(13), ...
+  'AvgTestSetSize',         avgMetrics(14), ...
+  'AvgTotalTime',           avgPerformance(1), ...
+  'AvgMemoryUsage',         avgPerformance(2), ...
+  'AvgThroughput',          avgPerformance(3));
+
 fprintf('\n==== Neural Network Architecture ====\n');
-fprintf('Input Layer: %d neurons\n', size(XTrain, 2));
-fprintf('Hidden Layer 1: 131 neurons (tansig)\n');
+fprintf('Input Layer: %d neurons (selected features)\n', size(XTrain, 2));
+fprintf('Hidden Layer: 57 neurons (logsig)\n');
 fprintf('Output Layer: 1 neuron (tansig)\n');
 fprintf('Training Algorithm: Scaled Conjugate Gradient (trainscg)\n');
 fprintf('Performance Function: Cross-Entropy\n');
 fprintf('L2 Regularization: %e\n', l2RegParam);
 fprintf('Max Epochs: %d\n', maxEpochs);
 
-% Display performance benchmarks
 fprintf('\n==== Performance Benchmarks ====\n');
-fprintf('Average Training Time: %.4f seconds (±%.4f)\n', mean(userPerformance(:,1)), std(userPerformance(:,1)));
+fprintf('Average Total Time: %.4f s (±%.4f)\n', mean(userPerformance(:,1)), std(userPerformance(:,1)));
 fprintf('Average Memory Usage: %.2f MB (±%.2f)\n', mean(userPerformance(:,2)), std(userPerformance(:,2)));
-fprintf('Average Throughput: %.2f samples/second (±%.2f)\n', mean(userPerformance(:,3)), std(userPerformance(:,3)));
+fprintf('Average Throughput: %.2f samples/s (±%.2f)\n', mean(userPerformance(:,3)), std(userPerformance(:,3)));
 
-% Create and display summary table
 summaryTable = table((1:numUsers)', ...
   userPerformance(:,1), ...
   userPerformance(:,2), ...
@@ -611,13 +475,13 @@ summaryTable = table((1:numUsers)', ...
   userMetrics(:,8), ...
   userMetrics(:,9), ...
   userMetrics(:,10), ...
-  'VariableNames', {...
-  'User', 'InferenceTime_sec', 'MemoryUsage_MB', 'Throughput_samples_per_sec', ...
-  'Accuracy', 'OverallPrecision', 'Recall', 'Specificity', 'F1_Score', ...
+  'VariableNames', { ...
+  'User', 'TotalTime_sec', 'MemoryUsage_MB', 'Throughput_samples_per_sec', ...
+  'Accuracy', 'Precision', 'Recall', 'Specificity', 'F1_Score', ...
   'MCC', 'FAR', 'FRR', 'EER', 'AUC'});
 
-% Compute overall metrics
-overallMetrics = table(mean(userPerformance(:,1)), ...
+overallMetrics = table( ...
+  mean(userPerformance(:,1)), ...
   mean(userPerformance(:,2)), ...
   mean(userPerformance(:,3)), ...
   mean(userMetrics(:,1)*100), ...
@@ -630,9 +494,9 @@ overallMetrics = table(mean(userPerformance(:,1)), ...
   mean(userMetrics(:,8)), ...
   mean(userMetrics(:,9)), ...
   mean(userMetrics(:,10)), ...
-  'VariableNames', {...
-  'Avg_InferenceTime_sec', 'Avg_MemoryUsage_MB', 'Avg_Throughput_samples_per_sec', ...
-  'Avg_Accuracy', 'Avg_OverallPrecision', 'Avg_Recall', 'Avg_Specificity', 'Avg_F1_Score', ...
+  'VariableNames', { ...
+  'Avg_TotalTime_sec', 'Avg_MemoryUsage_MB', 'Avg_Throughput_samples_per_sec', ...
+  'Avg_Accuracy', 'Avg_Precision', 'Avg_Recall', 'Avg_Specificity', 'Avg_F1_Score', ...
   'Avg_MCC', 'Avg_FAR', 'Avg_FRR', 'Avg_EER', 'Avg_AUC'});
 
 fprintf('\n==== Summary Table ====\n');
@@ -640,45 +504,46 @@ disp(summaryTable);
 disp('Overall Metrics:');
 disp(overallMetrics);
 
-% Create similarity matrix and format strings
+%% 5. Similarity Heatmap
+
 similarityMatrix = zeros(numUsers, numUsers);
+labelStrings     = cell(numUsers, numUsers);
+
 for i = 1:numUsers
-  for j = 1:numUsers
-    val = cell2mat(userSimilarityData(1,i,j));
-    mid = cell2mat(userSimilarityData(2,i,j));
-    var = cell2mat(userSimilarityData(3,i,j));
-    similarityMatrix(i,j) = val;
-    labelStrings{i,j} = sprintf('%.2f\nM: %.2f\n(±%.3f)', val, mid, var);
-  end
+    for j = 1:numUsers
+        val = cell2mat(userSimilarityData(1,i,j));
+        mid = cell2mat(userSimilarityData(2,i,j));
+        var = cell2mat(userSimilarityData(3,i,j));
+        if isempty(val), val = 0; end
+        if isempty(mid), mid = 0; end
+        if isempty(var), var = 0; end
+        similarityMatrix(i,j) = val;
+        labelStrings{i,j} = sprintf('%.2f\nM: %.2f\n(±%.3f)', val, mid, var);
+    end
 end
 
-% Create figure and plot heatmap
 figure('Position', [100 100 800 600]);
 imagesc(similarityMatrix);
-
-% Use a light colormap
-colormap(sky); % Or try: bone, pink, summer
+colormap(parula); % safer than 'sky'
 c = colorbar;
 c.Label.String = 'Similarity Score';
 
-% Add text annotations
-[X,Y] = meshgrid(1:numUsers, 1:numUsers);
+[Xh,Yh] = meshgrid(1:numUsers, 1:numUsers);
 for i = userRange_min:userRange_max
-  for j = userRange_min:userRange_max
-    text(i, j, labelStrings{j,i}, ...
-      'HorizontalAlignment', 'center', ...
-      'Color', 'black', ...
-      'FontSize', 10);
+    for j = userRange_min:userRange_max
+        text(j, i, labelStrings{i,j}, ...
+          'HorizontalAlignment', 'center', ...
+          'Color', 'black', ...
+          'FontSize', 10);
 
-    if leaveOutUsersList(i) == j
-      hold on;
-      plot(j, i, 'rs', 'MarkerSize', 60);
-      hold off;
+        if leaveOutUsersList(i) == j
+          hold on;
+          plot(j, i, 'rs', 'MarkerSize', 60);
+          hold off;
+        end
     end
-  end
 end
 
-% Customize axes
 set(gca, 'XTick', 1:numUsers, 'XTickLabel', userRange_min:userRange_max);
 set(gca, 'YTick', 1:numUsers, 'YTickLabel', userRange_min:userRange_max);
 xlabel("User N's similarity score");
@@ -686,49 +551,36 @@ ylabel("User N's Model");
 title('User similarity scores for each user model');
 axis square;
 
-% Save the results
-save('benchmark_results.mat', 'summaryTable', 'overallMetrics');
-
-% Save the models
+% Save results
+save('benchmark_results.mat', 'summaryTable', 'overallMetrics', 'results');
 save('user_authentication_models.mat', 'models');
-
-% Save feature analysis results
 save('feature_analysis_results.mat', 'featureAnalysis');
 
-% Add this helper function at the end of the file
+%% Helper: Mutual Information for a single feature vs binary label
 function mi = calculate_mutual_information(x, y)
-    % Normalize the continuous variable x
     x = (x - min(x)) / (max(x) - min(x) + eps);
-    
-    % Use 10 bins for discretization
     nbins = 10;
     edges = linspace(0, 1, nbins+1);
-    
-    % Discretize x into bins
     [~, disc_x] = histc(x, edges);
     disc_x(disc_x == nbins+1) = nbins;
-    
-    % Calculate joint and marginal probabilities
+
     joint_hist = zeros(nbins, 2);
     for i = 1:length(x)
-        if disc_x(i) > 0  % Ensure valid bin
+        if disc_x(i) > 0
             joint_hist(disc_x(i), y(i)+1) = joint_hist(disc_x(i), y(i)+1) + 1;
         end
     end
-    
-    % Convert to probabilities
+
     joint_p = joint_hist / (length(x) + eps);
-    
-    % Calculate marginal probabilities
     p_x = sum(joint_p, 2);
     p_y = sum(joint_p, 1);
-    
-    % Calculate mutual information
+
     mi = 0;
     for i = 1:nbins
         for j = 1:2
             if joint_p(i,j) > 0
-                mi = mi + joint_p(i,j) * log2(joint_p(i,j) / (p_x(i) * p_y(j) + eps) + eps);
+                mi = mi + joint_p(i,j) * ...
+                     log2(joint_p(i,j) / (p_x(i) * p_y(j) + eps) + eps);
             end
         end
     end

@@ -1,132 +1,173 @@
+%% User Similarity via DTW on Acc_TimeD_FreqD Features
+% Computes a DTW-based similarity matrix between users using the
+% combined Time + Frequency domain accelerometer features.
+
+clear all; close all; clc;
+
 folder_path = 'dataset';
+num_users   = 10;
 
-% TIME DOMAIN
+fprintf('Computing DTW-based user similarity on Acc_TimeD_FreqD features...\n');
 
-% Initializing the array for merged data in TD
-all_data = [];
+%% 1. Load data for all users (FDay + MDay) and stack for normalization
 
-% Looping through each user
-for user_idx = 1:10
-    % Loading data for the current user from two file patterns
+user_data_raw = cell(num_users, 1);  % each cell: [Ni x D] for user i
+all_data      = [];                  % stacked data from all users
+
+for user_idx = 1:num_users
     file1 = sprintf('U%02d_Acc_TimeD_FreqD_FDay.mat', user_idx);
     file2 = sprintf('U%02d_Acc_TimeD_FreqD_MDay.mat', user_idx);
 
-    % Full file paths
     file1_path = fullfile(folder_path, file1);
     file2_path = fullfile(folder_path, file2);
 
-    % Loading the data from both files
+    if ~exist(file1_path, 'file') || ~exist(file2_path, 'file')
+        fprintf('WARNING: Missing files for user %d. Skipping this user.\n', user_idx);
+        user_data_raw{user_idx} = [];
+        continue;
+    end
+
     data1 = load(file1_path);
     data2 = load(file2_path);
 
-    % Extracting the feature matrices (36 x 88 from each file)
-    feature_data1 = data1.(char(fieldnames(data1)));
-    feature_data2 = data2.(char(fieldnames(data2)));
+    feat1 = data1.(char(fieldnames(data1)));
+    feat2 = data2.(char(fieldnames(data2)));
 
-    % Concatenating the data for the specific user (72 x 88)
-    user_data = [feature_data1; feature_data2];
+    user_data = [feat1; feat2];  % concatenate days
 
-    % Appending the user data to the all_data_TD matrix
-    all_data = [all_data; user_data];
+    if isempty(user_data)
+        fprintf('WARNING: No data for user %d after concatenation.\n', user_idx);
+        user_data_raw{user_idx} = [];
+        continue;
+    end
+
+    user_data_raw{user_idx} = user_data;
+    all_data = [all_data; user_data];  % accumulate for global normalization
 end
 
-% Normalizing user data (z-score normalization)
-mean_vals = mean(all_data, 1);    % Computing the mean of each feature (across all users)
-std_vals = std(all_data, 0, 1);   % Computing the standard deviation of each feature (across all users)
+% Safety check
+if isempty(all_data)
+    error('No data loaded from any user. Check the dataset folder and file names.');
+end
 
-% Handling cases where standard deviation is zero
-std_vals(std_vals == 0) = 1;
+%% 2. Global z-score normalization (across all users)
 
-% Performing z-score normalization
-all_data_normalized = (all_data - mean_vals) ./ std_vals;
+mean_vals = mean(all_data, 1);
+std_vals  = std(all_data, 0, 1);
+std_vals(std_vals == 0) = 1;   % avoid division by zero
 
-% Number of users and samples per user
-num_users = 10;
-samples_per_user = 72;
-num_features = size(all_data_normalized, 2);  % Number of features (columns)
+user_data_norm = cell(num_users,1);
+for user_idx = 1:num_users
+    X = user_data_raw{user_idx};
+    if isempty(X)
+        user_data_norm{user_idx} = [];
+        continue;
+    end
+    user_data_norm{user_idx} = (X - mean_vals) ./ std_vals;
+end
 
-% Initializing DTW distance matrix
-dtw_matrix = zeros(num_users, num_users);
+%% 3. DTW distance matrix between users
 
-% Looping through all pairs of users and calculating DTW (Dynamic Time Warping) distances
+dtw_matrix = inf(num_users, num_users);  % initialize with Inf for safety
+
 for user_idx_1 = 1:num_users
-    for user_idx_2 = user_idx_1:num_users  % Avoiding duplicate comparisons
-        % Extracting data for User 1
-        start_idx_1 = (user_idx_1 - 1) * samples_per_user + 1;
-        end_idx_1 = user_idx_1 * samples_per_user;
-        user_data_1 = reshape(all_data_normalized(start_idx_1:end_idx_1, :), [], 1);
+    X1 = user_data_norm{user_idx_1};
+    if isempty(X1)
+        continue;
+    end
 
-        % Extracting data for User 2
-        start_idx_2 = (user_idx_2 - 1) * samples_per_user + 1;
-        end_idx_2 = user_idx_2 * samples_per_user;
-        user_data_2 = reshape(all_data_normalized(start_idx_2:end_idx_2, :), [], 1);
+    seq1 = X1(:);  % flatten to 1D sequence
 
-        % Calculate DTW distance
-        [dist, ~, ~] = dtw(user_data_1, user_data_2);
+    for user_idx_2 = user_idx_1:num_users
+        X2 = user_data_norm{user_idx_2};
+        if isempty(X2)
+            continue;
+        end
 
-        % Storing the DTW distance in the matrix
+        seq2 = X2(:);
+
+        % Compute DTW distance between flattened sequences
+        [dist, ~, ~] = dtw(seq1, seq2);
+
         dtw_matrix(user_idx_1, user_idx_2) = dist;
-        dtw_matrix(user_idx_2, user_idx_1) = dist;  % Symmetric matrix
+        dtw_matrix(user_idx_2, user_idx_1) = dist;  % symmetric
 
-        % Displaying the DTW distance
-        fprintf('DTW distance between User %d and User %d: %.4f\n', user_idx_1, user_idx_2, dist);
+        fprintf('DTW distance between User %d and User %d: %.4f\n', ...
+            user_idx_1, user_idx_2, dist);
     end
 end
 
-% Plotting the DTW distance matrix as a heatmap
-figure('Position', [100 100 800 600]);
-imagesc(dtw_matrix); % Displaying the matrix as a color image
-colorbar;            % Adding a colorbar to show the scale
-title('DTW for TD Distance Matrix');
-xlabel('User Index');
-ylabel('User Index');
-set(gca, 'XTick', 1:num_users, 'YTick', 1:num_users); % Labeling the axes with user indices
+%% 4. Most similar user (lowest DTW distance) per user
 
-% Initializing a cell array to store the results
-most_similar_users_TD = cell(num_users, 1);
+most_similar_users = cell(num_users, 1);
 
 for user_idx = 1:num_users
-    % Extracting the DTW distances for the current user
-    dtw_row = dtw_matrix(user_idx, :);
+    row = dtw_matrix(user_idx, :);
 
-    % Setting diagonal element to Inf to exclude self-comparison
-    dtw_row(user_idx) = Inf;
+    % skip users with no data (row all Inf)
+    if all(isinf(row))
+        most_similar_users{user_idx} = struct( ...
+            'User', user_idx, ...
+            'MostSimilarUser', NaN, ...
+            'Distance', Inf);
+        continue;
+    end
 
-    % Finding the index of the minimum DTW distance
-    [min_dist, similar_user_idx] = min(dtw_row);
+    % ignore self-distance
+    row(user_idx) = Inf;
 
-    % Storing the results
-    most_similar_users_TD{user_idx} = struct('User', user_idx, ...
+    [min_dist, similar_user_idx] = min(row);
+
+    most_similar_users{user_idx} = struct( ...
+        'User', user_idx, ...
         'MostSimilarUser', similar_user_idx, ...
         'Distance', min_dist);
 end
 
-[X,Y] = meshgrid(1:num_users, 1:num_users);
+%% 5. Heatmap visualization with annotations
+
+figure('Position', [100 100 800 600]);
+imagesc(dtw_matrix);
+colorbar;
+title('DTW Distance Matrix (Acc\_TimeD\_FreqD Features)');
+xlabel('User Index');
+ylabel('User Index');
+set(gca, 'XTick', 1:num_users, 'YTick', 1:num_users);
+
+[Xg, Yg] = meshgrid(1:num_users, 1:num_users);
+hold on;
 for targetUser = 1:num_users
     for secondaryUser = 1:num_users
-        % Format the DTW value as a string with 2 decimal places
-        dtw_value = sprintf('%.2f', dtw_matrix(targetUser, secondaryUser));
+        val = dtw_matrix(targetUser, secondaryUser);
+        if isinf(val)
+            txt = 'Inf';
+        else
+            txt = sprintf('%.2f', val);
+        end
 
-        % Use proper syntax for text function with x,y coordinates and string value
-        text(secondaryUser, targetUser, dtw_value, ...
+        text(secondaryUser, targetUser, txt, ...
             'HorizontalAlignment', 'center', ...
             'Color', 'black', ...
             'FontSize', 8);
 
-        if most_similar_users_TD{targetUser}.MostSimilarUser == secondaryUser
-            hold on;
-            plot(secondaryUser, targetUser, 'rs', 'MarkerSize', 60);
-            hold off;
+        if ~isinf(val) && ...
+           ~isempty(most_similar_users{targetUser}.MostSimilarUser) && ...
+           most_similar_users{targetUser}.MostSimilarUser == secondaryUser
+            plot(secondaryUser, targetUser, 'rs', 'MarkerSize', 20, 'LineWidth', 1.5);
         end
     end
 end
+hold off;
 
-% Displaying results
-fprintf('Most Similar Users:\n');
+%% 6. Print summary
+
+fprintf('\nMost Similar Users (based on DTW distance):\n');
 for user_idx = 1:num_users
-    fprintf('User %d is most similar to User %d with DTW distance: %.4f\n', ...
-        most_similar_users_TD{user_idx}.User, ...
-        most_similar_users_TD{user_idx}.MostSimilarUser, ...
-        most_similar_users_TD{user_idx}.Distance);
+    info = most_similar_users{user_idx};
+    if isinf(info.Distance) || isnan(info.MostSimilarUser)
+        fprintf('User %d: no valid comparison (missing data)\n', info.User);
+    else
+        fprintf('User %d is most similar to User %d with DTW distance: %.4f\n', ...
+            info.User, info.MostSimilarUser, info.Distance);
+    end
 end
-
